@@ -91,3 +91,27 @@ For open source projects, say how it is licensed.
 
 ## Project status
 If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+
+
+
+
+python -m app.main export --dataset empenhos --version v1 --ano 2026
+python -m app.main download --dataset empenhos --version v1 --ano 2026 --tc tce_pb
+python -m app.main download-all-years --dataset empenhos --version v1 --tc tce_pb
+
+pyinstaller ^
+  --clean ^
+  --noconfirm ^
+  --name infocontas_datahub ^
+  --onedir ^
+  --paths . ^
+  --collect-all polars ^
+  --collect-all pyarrow ^
+  --collect-all pyodbc ^
+  --hidden-import pyodbc ^
+  --hidden-import pyarrow ^
+  --hidden-import pyarrow.lib ^
+  --hidden-import pyarrow.dataset ^
+  --hidden-import pyarrow.parquet ^
+  --hidden-import pyarrow.compute ^
+  app/main.py
