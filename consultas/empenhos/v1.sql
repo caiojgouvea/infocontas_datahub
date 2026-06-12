@@ -74,4 +74,4 @@ FROM dw.dbo.FATO_DESPESA_DIARIO fato
 	LEFT JOIN dw.dbo.DIM_META meta on
 		meta.id_Meta = fato.Id_Meta
 WHERE 
-	fato.ano_emissao= ? and fato.vl_Empenho>0
+	fato.ano_emissao= {{ano}} and fato.vl_Empenho>0
