@@ -1,14 +1,16 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
-
 import pyarrow as pa
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine, Result
 
-from infra.database.ConnectionFactory import create_engine_sa
+from infra.database.ConnectionFactory import (
+    create_engine_sa,
+    create_impala_connection,
+    database_dialect,
+)
 
 Params = Union[Mapping[str, Any], Sequence[Any], None]
 
@@ -51,6 +53,7 @@ def connect(**engine_kwargs: Any) -> DbContext:
     """
     engine = create_engine_sa(**engine_kwargs)
     conn = engine.connect().execution_options(stream_results=True)
+
     return DbContext(engine, conn)
 
 
@@ -58,9 +61,64 @@ def load_sql(sql_path: Union[str, Path], encoding: str = "utf-8") -> str:
     return Path(sql_path).read_text(encoding=encoding)
 
 
+def _param_ano(params: Params) -> Optional[int]:
+    if params is None:
+        return None
+
+    if isinstance(params, Mapping):
+        if "ano" not in params:
+            return None
+
+        return int(params["ano"])
+
+    if (
+        isinstance(params, Sequence)
+        and not isinstance(params, (str, bytes))
+        and len(params) >= 1
+    ):
+        return int(params[0])
+
+    return None
+
+
+def render_sql_template(sql: str, params: Params) -> tuple[str, bool]:
+    """
+    Renderização controlada de parâmetros do DataHub.
+
+    Padrão novo recomendado nos arquivos SQL:
+
+        where ano = {{ano}}
+
+    Quando o SQL contém {{ano}}, o valor é substituído por inteiro e a query
+    é executada sem parâmetros do driver.
+
+    Isso evita diferença entre drivers:
+    - SQL Server/pyodbc costuma usar ?
+    - PostgreSQL/psycopg costuma usar %s
+    - Impala pode variar conforme driver/configuração
+
+    Compatibilidade:
+    - Se o SQL não contém {{ano}}, nada é alterado.
+    - Nesse caso, o código continua passando params ao driver como antes.
+    """
+    if "{{ano}}" not in sql:
+        return sql, False
+
+    ano = _param_ano(params)
+
+    if ano is None:
+        raise ValueError(
+            "SQL contém '{{ano}}', mas o parâmetro ano não foi informado."
+        )
+
+    return sql.replace("{{ano}}", str(ano)), True
+
+
 def execute_sql(conn: Connection, sql: str, params: Params) -> Result:
     """Executa SQL preservando o estilo de parâmetros do script original."""
-    if params is None:
+    sql, rendered = render_sql_template(sql, params)
+
+    if rendered or params is None:
         return conn.exec_driver_sql(sql)
 
     if isinstance(params, Mapping):
@@ -74,6 +132,7 @@ def execute_sql(conn: Connection, sql: str, params: Params) -> Result:
 
 def set_driver_arraysize(result: Result, arraysize: int) -> None:
     cursor = getattr(result, "cursor", None)
+
     if cursor is not None and hasattr(cursor, "arraysize"):
         try:
             cursor.arraysize = int(arraysize)
@@ -91,6 +150,7 @@ def rows_to_record_batch(
     if not rows:
         if schema is None:
             return pa.RecordBatch.from_arrays([], [])
+
         return pa.RecordBatch.from_arrays(
             [pa.array([], type=f.type) for f in schema],
             schema=schema,
@@ -103,17 +163,24 @@ def rows_to_record_batch(
     if schema is None:
         for column_values in transposed_columns:
             if coerce_decimal_to_str:
-                coerced = [str(v) if hasattr(v, "as_tuple") else v for v in column_values]
+                coerced = [
+                    str(v) if hasattr(v, "as_tuple") else v
+                    for v in column_values
+                ]
                 arrays.append(pa.array(coerced))
             else:
                 arrays.append(pa.array(column_values))
+
         return pa.RecordBatch.from_arrays(arrays, list(columns))
 
     # reordena colunas conforme schema.names
     if list(columns) != schema.names:
         index_by_name = {name: idx for idx, name in enumerate(columns)}
+
         transposed_columns = [
-            transposed_columns[index_by_name[name]] if name in index_by_name else tuple([None] * len(rows))
+            transposed_columns[index_by_name[name]]
+            if name in index_by_name
+            else tuple([None] * len(rows))
             for name in schema.names
         ]
 
@@ -157,6 +224,7 @@ def iter_record_batches(
 
     while True:
         rows = result.fetchmany(chunk_rows)
+
         if not rows:
             break
 
@@ -166,12 +234,15 @@ def iter_record_batches(
             schema=schema,
             coerce_decimal_to_str=coerce_decimal_to_str,
         )
+
         meta = BatchMeta(
             batch_index=batch_index,
             rows=len(rows),
             columns=len(columns),
         )
+
         yield meta, record_batch
+
         batch_index += 1
 
 
@@ -187,6 +258,7 @@ def iter_record_batches_from_file(
     encoding: str = "utf-8",
 ) -> Iterator[Tuple[BatchMeta, pa.RecordBatch]]:
     sql = load_sql(sql_path, encoding=encoding)
+
     return iter_record_batches(
         cx,
         sql,
@@ -196,6 +268,70 @@ def iter_record_batches_from_file(
         schema=schema,
         coerce_decimal_to_str=coerce_decimal_to_str,
     )
+
+
+def iter_impala_record_batches_from_file(
+    sql_path: Union[str, Path],
+    *,
+    params: Params = None,
+    chunk_rows: int = 200_000,
+    driver_arraysize: int = 10_000,
+    schema: Optional[pa.Schema] = None,
+    coerce_decimal_to_str: bool = False,
+    encoding: str = "utf-8",
+) -> Iterator[Tuple[BatchMeta, pa.RecordBatch]]:
+    sql = load_sql(sql_path, encoding=encoding)
+    sql, rendered = render_sql_template(sql, params)
+
+    conn = create_impala_connection()
+    cursor = None
+
+    try:
+        cursor = conn.cursor()
+
+        if hasattr(cursor, "arraysize"):
+            try:
+                cursor.arraysize = int(driver_arraysize)
+            except Exception:
+                pass
+
+        if rendered or params is None:
+            cursor.execute(sql)
+        else:
+            cursor.execute(sql, params)
+
+        columns = [str(col[0]) for col in cursor.description]
+        batch_index = 0
+
+        while True:
+            rows = cursor.fetchmany(chunk_rows)
+
+            if not rows:
+                break
+
+            record_batch = rows_to_record_batch(
+                columns,
+                rows,
+                schema=schema,
+                coerce_decimal_to_str=coerce_decimal_to_str,
+            )
+
+            meta = BatchMeta(
+                batch_index=batch_index,
+                rows=len(rows),
+                columns=len(columns),
+            )
+
+            yield meta, record_batch
+
+            batch_index += 1
+
+    finally:
+        try:
+            if cursor is not None:
+                cursor.close()
+        finally:
+            conn.close()
 
 
 def extract_record_batches_from_file(
@@ -217,7 +353,26 @@ def extract_record_batches_from_file(
     - executa o SQL
     - faz streaming dos batches
     - fecha conexão/engine automaticamente ao final
+
+    Quando DB_DIALECT=impala, usa conexão direta via impyla.
+    Para os demais bancos, mantém o caminho atual via SQLAlchemy.
+
+    Compatibilidade de parâmetros:
+    - SQL com {{ano}} é renderizado internamente e executado sem params.
+    - SQL sem {{ano}} continua usando params do driver:
+        SQL Server/pyodbc: ?
+        PostgreSQL/psycopg: %s
     """
+    if database_dialect() == "impala":
+        return iter_impala_record_batches_from_file(
+            sql_path,
+            params=params,
+            chunk_rows=chunk_rows,
+            driver_arraysize=driver_arraysize,
+            schema=schema,
+            coerce_decimal_to_str=coerce_decimal_to_str,
+            encoding=encoding,
+        )
 
     def _generator() -> Iterator[Tuple[BatchMeta, pa.RecordBatch]]:
         with connect(**engine_kwargs) as cx:
@@ -241,6 +396,8 @@ def record_batches_to_table(
     schema: Optional[pa.Schema] = None,
 ) -> pa.Table:
     batch_list = list(batches)
+
     if schema is None:
         return pa.Table.from_batches(batch_list)
+
     return pa.Table.from_batches(batch_list, schema=schema)
