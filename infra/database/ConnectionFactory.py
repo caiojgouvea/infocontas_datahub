@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import urllib.parse
 from typing import Any, Dict, Optional
 
 from sqlalchemy import create_engine
@@ -14,6 +16,9 @@ from project_config.Config import (
 )
 
 
+logger = logging.getLogger("database")
+
+
 @dataclass(frozen=True)
 class DatabaseConfig:
     dialect: str
@@ -25,6 +30,7 @@ class DatabaseConfig:
     password: Optional[str]
     query: Dict[str, str]
     schema: Optional[str]
+    trusted_connection: bool = False
 
 
 @dataclass(frozen=True)
@@ -144,7 +150,13 @@ def database_config_from_env() -> DatabaseConfig:
 
     port = env_int_optional("DB_PORT")
 
-    if port is None:
+    is_mssql_named_instance = (
+        dialect == "mssql"
+        and host is not None
+        and "\\" in host
+    )
+
+    if port is None and not is_mssql_named_instance:
         port = _DEFAULT_PORT.get(dialect)
 
     query = parse_query_kv(env_optional("DB_QUERY"))
@@ -159,6 +171,11 @@ def database_config_from_env() -> DatabaseConfig:
             "TrustServerCertificate",
             env_optional("DB_TRUST_SERVER_CERTIFICATE", "yes"),
         )
+
+        login_timeout = env_optional("DB_LOGIN_TIMEOUT")
+
+        if login_timeout:
+            query.setdefault("LoginTimeout", login_timeout)
 
         if trusted_connection:
             query.setdefault("Trusted_Connection", "yes")
@@ -196,6 +213,7 @@ def database_config_from_env() -> DatabaseConfig:
         password=password,
         query=query,
         schema=schema,
+        trusted_connection=trusted_connection,
     )
 
 
@@ -293,12 +311,85 @@ def sqlalchemy_url_from_config(cfg: Optional[DatabaseConfig] = None) -> URL:
     if cfg.dialect == "sqlite":
         return URL.create("sqlite", database=cfg.database or "./db.sqlite")
 
+    if (
+        cfg.dialect == "mssql"
+        and cfg.driver == "pyodbc"
+        and cfg.trusted_connection
+    ):
+        odbc_parts: list[str] = []
+
+        odbc_driver = cfg.query.get("driver", "ODBC Driver 17 for SQL Server")
+        odbc_parts.append(f"DRIVER={{{odbc_driver}}}")
+
+        server = cfg.host or ""
+
+        if cfg.port:
+            server = f"{server},{cfg.port}"
+
+        odbc_parts.append(f"SERVER={server}")
+
+        if cfg.database:
+            odbc_parts.append(f"DATABASE={cfg.database}")
+
+        odbc_parts.append("Trusted_Connection=yes")
+
+        encrypt = cfg.query.get("Encrypt")
+
+        if encrypt:
+            odbc_parts.append(f"Encrypt={encrypt}")
+
+        trust_cert = cfg.query.get("TrustServerCertificate")
+
+        if trust_cert:
+            odbc_parts.append(f"TrustServerCertificate={trust_cert}")
+
+        login_timeout = cfg.query.get("LoginTimeout")
+
+        if login_timeout:
+            odbc_parts.append(f"LoginTimeout={login_timeout}")
+
+        raw_odbc_connect = ";".join(odbc_parts)
+        encoded_odbc_connect = urllib.parse.quote_plus(raw_odbc_connect)
+
+        logger.info(
+            "Conexão SQL Server via odbc_connect | host=%s | port=%s | "
+            "database=%s | driver=%s | trusted_connection=%s | "
+            "encrypt=%s | trust_server_certificate=%s | login_timeout=%s",
+            cfg.host,
+            cfg.port,
+            cfg.database,
+            odbc_driver,
+            cfg.trusted_connection,
+            encrypt,
+            trust_cert,
+            login_timeout,
+        )
+
+        return URL.create(
+            "mssql+pyodbc",
+            query={"odbc_connect": encoded_odbc_connect},
+        )
+
     dialect_driver = f"{cfg.dialect}+{cfg.driver}"
 
     database = cfg.database
 
     if cfg.dialect == "oracle" and cfg.query.get("service_name"):
         database = None
+
+    logger.info(
+        "Conexão via SQLAlchemy URL | dialect=%s | driver=%s | "
+        "host=%s | port=%s | database=%s | schema=%s | "
+        "trusted_connection=%s | user_configured=%s",
+        cfg.dialect,
+        cfg.driver,
+        cfg.host,
+        cfg.port,
+        database,
+        cfg.schema,
+        cfg.trusted_connection,
+        bool(cfg.username),
+    )
 
     return URL.create(
         dialect_driver,
@@ -319,6 +410,13 @@ def create_engine_sa(
     connect_args: Optional[Dict[str, Any]] = None,
 ) -> Engine:
     url = sqlalchemy_url_from_config()
+
+    logger.debug(
+        "Criando SQLAlchemy engine | pool_pre_ping=%s | pool_recycle=%s | echo=%s",
+        pool_pre_ping,
+        pool_recycle,
+        echo,
+    )
 
     return create_engine(
         url,

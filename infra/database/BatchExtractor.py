@@ -2,15 +2,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+import logging
 import pyarrow as pa
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine, Result
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from infra.database.ConnectionFactory import (
     create_engine_sa,
     create_impala_connection,
     database_dialect,
 )
+
+
+logger = logging.getLogger("database")
+
 
 Params = Union[Mapping[str, Any], Sequence[Any], None]
 
@@ -44,6 +50,50 @@ class DbContext:
         self.close()
 
 
+
+def _database_connection_hint(exc: Exception) -> str:
+    msg = str(exc)
+    msg_lower = msg.lower()
+
+    if "im002" in msg_lower:
+        return (
+            "Driver ODBC não encontrado. Verifique se o driver informado em "
+            "DB_ODBC_DRIVER está instalado na máquina e se o nome está exatamente igual."
+        )
+
+    if "08001" in msg or "server was not found" in msg_lower or "servidor não foi encontrado" in msg_lower:
+        return (
+            "Erro 08001: o SQL Server não foi encontrado ou não está acessível. "
+            "Verifique DB_HOST, instância nomeada, DB_PORT, firewall, VPN/rede, "
+            "DNS e se o SQL Server permite conexões remotas."
+        )
+
+    if "28000" in msg or "login failed" in msg_lower or "falha de logon" in msg_lower:
+        return (
+            "Erro de autenticação: a conexão chegou ao SQL Server, mas o login foi recusado. "
+            "Verifique usuário/senha ou, em autenticação Windows, se o usuário logado "
+            "tem permissão no banco."
+        )
+
+    if "hyt00" in msg_lower or "timeout" in msg_lower or "tempo limite" in msg_lower:
+        return (
+            "Timeout de conexão. Verifique rede, porta, nome da instância, firewall e "
+            "conectividade com o servidor SQL Server."
+        )
+
+    if "trusted_connection" in msg_lower or "sspi" in msg_lower:
+        return (
+            "Falha relacionada à autenticação integrada do Windows. Verifique se "
+            "DB_TRUSTED_CONNECTION=true está adequado ao ambiente e se o processo está "
+            "rodando com o usuário de rede autorizado."
+        )
+
+    return (
+        "Falha ao conectar ao banco. Verifique DB_DIALECT, DB_DRIVER, DB_HOST, "
+        "DB_PORT, DB_NAME, DB_ODBC_DRIVER, DB_TRUSTED_CONNECTION e parâmetros de "
+        "rede/autenticação."
+    )
+
 def connect(**engine_kwargs: Any) -> DbContext:
     """
     Cria Engine + Connection com stream_results=True.
@@ -52,9 +102,40 @@ def connect(**engine_kwargs: Any) -> DbContext:
     em vez de espalhada nos services.
     """
     engine = create_engine_sa(**engine_kwargs)
-    conn = engine.connect().execution_options(stream_results=True)
 
-    return DbContext(engine, conn)
+    try:
+        logger.info("Abrindo conexão com o banco de dados")
+        conn = engine.connect().execution_options(stream_results=True)
+        logger.info("Conexão com o banco de dados aberta com sucesso")
+
+        return DbContext(engine, conn)
+
+    except OperationalError as exc:
+        engine.dispose()
+        hint = _database_connection_hint(exc)
+        logger.exception(
+            "Falha operacional ao conectar ao banco de dados | diagnóstico=%s",
+            hint,
+        )
+        raise RuntimeError(hint) from exc
+
+    except SQLAlchemyError as exc:
+        engine.dispose()
+        hint = _database_connection_hint(exc)
+        logger.exception(
+            "Falha SQLAlchemy ao conectar ao banco de dados | diagnóstico=%s",
+            hint,
+        )
+        raise RuntimeError(hint) from exc
+
+    except Exception as exc:
+        engine.dispose()
+        hint = _database_connection_hint(exc)
+        logger.exception(
+            "Falha inesperada ao conectar ao banco de dados | diagnóstico=%s",
+            hint,
+        )
+        raise RuntimeError(hint) from exc
 
 
 def load_sql(sql_path: Union[str, Path], encoding: str = "utf-8") -> str:
