@@ -1,5 +1,1 @@
 
-
-WHERE 
-	DAT_REF.ANO = ?
-ORDER BY DAT_REF.MES
