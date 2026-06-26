@@ -1,0 +1,70 @@
+# Ambientes virtuais
+.venv
+.venv-linux
+.venv-el8
+venv
+env
+
+# Builds anteriores
+build
+dist
+*.spec
+
+# Caches Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.cache
+
+# Logs, saídas e diretórios runtime
+log
+logs
+output
+downloads
+contract
+*.log
+
+# Dados e arquivos grandes
+*.parquet
+*.arrow
+*.csv
+*.xlsx
+*.xls
+*.jsonl
+
+# Pacotes compactados já gerados
+*.tar.gz
+*.zip
+*.7z
+
+# Git e IDE
+.git
+.gitignore
+.vscode
+.idea
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile.build-el8
+
+
+# Documentação e scripts de build locais
+Documentos
+build.bat
+build_linux.sh
+
+# Logs, saídas e diretórios runtime
+log
+logs
+output
+downloads
+consultas
+contract
+*.log
