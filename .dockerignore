@@ -5,6 +5,11 @@
 venv
 env
 
+# Segredos (nunca embutir credenciais na imagem)
+.env
+.env.*
+!.env.example
+
 # Builds anteriores
 build
 dist
