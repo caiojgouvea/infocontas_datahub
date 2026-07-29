@@ -16,6 +16,8 @@ def _result_title(command: str, result: dict) -> str:
     if command == "export":
         if status == "exported_and_published":
             return "Pipeline executado com sucesso; dados publicados"
+        if status == "validated_not_published":
+            return "Pipeline executado com sucesso; dados válidos, mas NÃO publicados (--no-publish)"
         if status == "completed_with_invalid_rows_not_published":
             return "Pipeline concluído com erros de validação; dados não publicados"
         if status == "completed_with_all_rows_invalid":
@@ -65,6 +67,7 @@ def build_parser():
     exp.add_argument("--dataset", required=True)
     exp.add_argument("--version", required=True)
     exp.add_argument("--ano", required=True, type=int)
+    exp.add_argument("--no-publish", action="store_true", help="Extrai e valida, mas não publica no hub (teste local da query/contrato).")
 
     dl = sub.add_parser("download")
     dl.add_argument("--dataset", required=True)
@@ -91,6 +94,7 @@ def print_banner(a, log: Path | None):
     if getattr(a, "ano", None) is not None: print(f"Ano     : {a.ano}")
     if getattr(a, "tc", None): print(f"TC      : {a.tc}")
     if getattr(a, "dest", None): print(f"Dest    : {a.dest}")
+    if getattr(a, "no_publish", False): print("Publish : NÃO (--no-publish)")
     if log: print(f"Log     : {log}")
     print()
 
@@ -117,6 +121,7 @@ def _args_to_kwargs(a):
     if getattr(a, "ano", None) is not None: k["ano"] = a.ano
     if getattr(a, "tc", None): k["tc"] = a.tc
     if getattr(a, "dest", None): k["dest"] = a.dest
+    if getattr(a, "no_publish", False): k["no_publish"] = True
     return k
 
 def main():

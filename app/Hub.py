@@ -30,7 +30,7 @@ class Hub:
 
     def execute_command(self, *, command: str, **k):
         if command == "export":
-            return self.export_uc.execute(dataset=k["dataset"], version=k["version"], ano=k["ano"])
+            return self.export_uc.execute(dataset=k["dataset"], version=k["version"], ano=k["ano"], publish=not k.get("no_publish", False))
         if command == "download":
             return self.download_uc.execute(dataset=k["dataset"], version=k["version"], ano=k["ano"], tc=k["tc"], dest=k.get("dest", "local"))
         if command == "download-all-years":
