@@ -1,0 +1,46 @@
+# Segredos (nunca versionar credenciais)
+.env
+.env.*
+!.env.example
+
+# Ambientes virtuais
+.venv
+.venv-linux
+.venv-el8
+venv
+env
+
+# Caches e artefatos Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.cache
+
+# Builds anteriores
+build
+dist
+*.spec
+
+# Diretórios runtime (gerados ao executar o pipeline)
+log/
+logs/
+output/
+contract/
+download/
+downloads/
+*.log
+
+# Dados gerados/baixados
+*.parquet
+*.arrow
+*.jsonl
+
+# IDE e sistema
+.vscode
+.idea
+.DS_Store
+Thumbs.db

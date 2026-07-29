@@ -1,16 +1,24 @@
+import logging
+import shutil
 from pathlib import Path
 from app.AppConfig import AppConfig
+from app.logger import log_last, log_section
 from domain.Datasets import Datasets
 from domain.PartitionSpec import PartitionSpec
 from infra.storage.Storage import Storage
 from services.ContractService import ContractService
 
+logger = logging.getLogger("mirror")
+
+DEST_MODES = ("local", "minio", "both")
+
 class DownloadBase:
-    def __init__(self, *, registry: Datasets, storage: Storage, app_config: AppConfig, contract_service: ContractService):
+    def __init__(self, *, registry: Datasets, storage: Storage, app_config: AppConfig, contract_service: ContractService, dest_storage: Storage | None = None):
         self.registry = registry
         self.storage = storage
         self.app_config = app_config
         self.contract_service = contract_service
+        self.dest_storage = dest_storage
 
     def _norm_text(self, value, field: str) -> str:
         text = (value or "").strip().lower()
@@ -51,6 +59,27 @@ class DownloadBase:
         self.storage.download_prefix(remote_prefix=remote_prefix, local_dir=local_dir, max_workers=workers)
 
         return files, workers
+
+    def _validate_dest(self, dest: str) -> str:
+        if dest not in DEST_MODES:
+            raise ValueError(f"--dest inválido: {dest!r}. Use um de {DEST_MODES}.")
+
+        if dest in ("minio", "both") and self.dest_storage is None:
+            raise ValueError(
+                f"--dest={dest!r} exige as variáveis DEST_MINIO_* configuradas no .env."
+            )
+
+        return dest
+
+    def _mirror_to_dest(self, *, remote_prefix: str, local_dir: Path) -> bool:
+        log_section(logger, "MIRROR")
+        log_last(logger, f"Copiando para MinIO de destino | remote_prefix={remote_prefix} | local={local_dir}")
+        self.dest_storage.upload_dir(local_dir=local_dir, remote_prefix=remote_prefix)
+        return True
+
+    @staticmethod
+    def _cleanup_local(local_dir: Path) -> None:
+        shutil.rmtree(local_dir, ignore_errors=True)
 
     @staticmethod
     def _is_real_file_object(obj) -> bool:

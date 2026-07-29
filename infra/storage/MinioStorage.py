@@ -11,8 +11,8 @@ class MinioStorage(Storage):
     Adapter da interface Storage para o cliente concreto de MinIO.
     """
 
-    def __init__(self):
-        self.client = build_minio_client_from_env(base_prefix="")
+    def __init__(self, *, client=None):
+        self.client = client or build_minio_client_from_env(base_prefix="")
 
     def remove_prefix(self, *, remote_prefix: str) -> None:
         self.client.delete_prefix(remote_prefix)

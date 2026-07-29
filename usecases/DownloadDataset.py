@@ -11,28 +11,31 @@ class DownloadResult:
     objects_found: int
     download_max_workers: int
     status: str
+    dest: str
     ano: int | None = None
+    mirrored_to_dest: bool = False
+    local_kept: bool = True
 
     def to_dict(self):
         return asdict(self)
 
 class DownloadDataset(DownloadBase):
-    def execute(self, *, dataset: str, version: str, ano: int, tc: str):
+    def execute(self, *, dataset: str, version: str, ano: int, tc: str, dest: str = "local"):
         ds = self._norm_text(dataset, "dataset")
         ver = self._norm_text(version, "version")
         tc = self._norm_text(tc, "tc")
         ano = self._norm_int(ano, "ano")
 
-        return self._execute( dataset=ds, version=ver, tc=tc, ano=ano, values={"tc": tc, "ano": ano}, drop_last_n=None, status="downloaded",
+        return self._execute( dataset=ds, version=ver, tc=tc, ano=ano, values={"tc": tc, "ano": ano}, drop_last_n=None, status="downloaded", dest=dest,
             not_found_msg=f"Nenhum dado publicado encontrado para dataset='{ds}', version='{ver}', tc='{tc}', ano={ano}.",)
 
-    def execute_all_years(self, *, dataset: str, version: str, tc: str):
+    def execute_all_years(self, *, dataset: str, version: str, tc: str, dest: str = "local"):
         ds = self._norm_text(dataset, "dataset")
         ver = self._norm_text(version, "version")
         tc = self._norm_text(tc, "tc")
 
         return self._execute(dataset=ds,version=ver,tc=tc,ano=None,values={"tc": tc},
-            drop_last_n=self._drop_all_partitions_after_tc(dataset=ds, version=ver),
+            drop_last_n=self._drop_all_partitions_after_tc(dataset=ds, version=ver), dest=dest,
             status="downloaded_all_years", not_found_msg=f"Nenhum dado publicado encontrado para dataset='{ds}', version='{ver}', tc='{tc}' em qualquer ano.",)
 
     def _drop_all_partitions_after_tc(self, *, dataset: str, version: str) -> int:
@@ -51,7 +54,8 @@ class DownloadDataset(DownloadBase):
         from domain.PartitionSpec import PartitionSpec
         return PartitionSpec.from_contract(contract)
 
-    def _execute(self,*,dataset: str,version: str,tc: str,ano: int | None,values: dict,drop_last_n: int | None,status: str,not_found_msg: str,):
+    def _execute(self,*,dataset: str,version: str,tc: str,ano: int | None,values: dict,drop_last_n: int | None,status: str,not_found_msg: str,dest: str = "local",):
+        dest = self._validate_dest(dest)
         remote_prefix, local_dir = self._resolve_download_target(dataset=dataset,version=version,values=values,drop_last_n=drop_last_n,)
 
         try:
@@ -59,4 +63,10 @@ class DownloadDataset(DownloadBase):
         except FileNotFoundError as e:
             raise FileNotFoundError(not_found_msg) from e
 
-        return DownloadResult(dataset=dataset,version=version,tc=tc,ano=ano,remote_prefix=remote_prefix,local_dir=str(local_dir),objects_found=len(objs),download_max_workers=workers,status=status,).to_dict()
+        mirrored = self._mirror_to_dest(remote_prefix=remote_prefix, local_dir=local_dir) if dest in ("minio", "both") else False
+
+        local_kept = dest in ("local", "both")
+        if not local_kept:
+            self._cleanup_local(local_dir)
+
+        return DownloadResult(dataset=dataset,version=version,tc=tc,ano=ano,remote_prefix=remote_prefix,local_dir=str(local_dir),objects_found=len(objs),download_max_workers=workers,status=status,dest=dest,mirrored_to_dest=mirrored,local_kept=local_kept,).to_dict()

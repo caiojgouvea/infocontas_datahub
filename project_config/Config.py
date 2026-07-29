@@ -18,6 +18,13 @@ REQUIRED_ENV_VARS = (
     "MINIO_SECRET_KEY",
 )
 
+DEST_MINIO_ENV_VARS = (
+    "DEST_MINIO_ENDPOINT",
+    "DEST_MINIO_BUCKET",
+    "DEST_MINIO_ACCESS_KEY",
+    "DEST_MINIO_SECRET_KEY",
+)
+
 OPTIONAL_ENV_DEFAULTS = {
     "PARQUET_CHUNK_ROWS": "250000",
     "MAX_INVALID_SAMPLES": "100",
@@ -151,5 +158,28 @@ def build_minio_client_from_env(*, base_prefix: str = "") -> "MinioClient":
         secret_key=secret_key,
         bucket=bucket,
         base_prefix=base_prefix,
+    )
+    return MinioClient(cfg)
+
+
+def build_dest_minio_client_from_env(*, base_prefix: str = "") -> Optional["MinioClient"]:
+    """
+    MinIO de destino (opcional): permite espelhar os dados baixados do hub para um
+    bucket próprio do TC. Só é ativado quando as 4 variáveis DEST_MINIO_* estiverem
+    preenchidas; caso contrário retorna None e o fluxo padrão (somente disco) segue igual.
+    """
+    from infra.storage.MinioClient import MinioClient, MinioConfig
+
+    init_env(require_dotenv=False, override=True)
+
+    if any(not (os.getenv(k) or "").strip() for k in DEST_MINIO_ENV_VARS):
+        return None
+
+    cfg = MinioConfig(
+        endpoint=env_required("DEST_MINIO_ENDPOINT"),
+        access_key=env_required("DEST_MINIO_ACCESS_KEY"),
+        secret_key=env_required("DEST_MINIO_SECRET_KEY"),
+        bucket=env_required("DEST_MINIO_BUCKET"),
+        base_prefix=env_optional("DEST_MINIO_PREFIX", base_prefix),
     )
     return MinioClient(cfg)

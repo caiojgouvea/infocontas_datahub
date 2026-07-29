@@ -71,11 +71,13 @@ def build_parser():
     dl.add_argument("--version", required=True)
     dl.add_argument("--ano", required=True, type=int)
     dl.add_argument("--tc", required=True)
+    dl.add_argument("--dest", choices=["local", "minio", "both"], default="local")
 
     dla = sub.add_parser("download-all-years")
     dla.add_argument("--dataset", required=True)
     dla.add_argument("--version", required=True)
     dla.add_argument("--tc", required=True)
+    dla.add_argument("--dest", choices=["local", "minio", "both"], default="local")
 
     return p
 
@@ -88,6 +90,7 @@ def print_banner(a, log: Path | None):
     print(f"Version : {a.version}")
     if getattr(a, "ano", None) is not None: print(f"Ano     : {a.ano}")
     if getattr(a, "tc", None): print(f"TC      : {a.tc}")
+    if getattr(a, "dest", None): print(f"Dest    : {a.dest}")
     if log: print(f"Log     : {log}")
     print()
 
@@ -113,6 +116,7 @@ def _args_to_kwargs(a):
     k = {"dataset": a.dataset, "version": a.version}
     if getattr(a, "ano", None) is not None: k["ano"] = a.ano
     if getattr(a, "tc", None): k["tc"] = a.tc
+    if getattr(a, "dest", None): k["dest"] = a.dest
     return k
 
 def main():
