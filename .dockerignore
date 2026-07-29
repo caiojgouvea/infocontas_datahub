@@ -64,12 +64,3 @@ Dockerfile.build-el8
 Documentos
 build.bat
 build_linux.sh
-
-# Logs, saídas e diretórios runtime
-log
-logs
-output
-downloads
-consultas
-contract
-*.log

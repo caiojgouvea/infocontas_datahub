@@ -351,6 +351,19 @@ def iter_record_batches_from_file(
     )
 
 
+def _decode_bytes_value(value: Any) -> Any:
+    if not isinstance(value, bytes):
+        return value
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        return value.decode("latin-1")
+
+
+def _decode_row_bytes(rows: Sequence[Tuple[Any, ...]]) -> list[Tuple[Any, ...]]:
+    return [tuple(_decode_bytes_value(v) for v in row) for row in rows]
+
+
 def iter_impala_record_batches_from_file(
     sql_path: Union[str, Path],
     *,
@@ -392,7 +405,7 @@ def iter_impala_record_batches_from_file(
 
             record_batch = rows_to_record_batch(
                 columns,
-                rows,
+                _decode_row_bytes(rows),
                 schema=schema,
                 coerce_decimal_to_str=coerce_decimal_to_str,
             )
