@@ -1,104 +1,156 @@
 # infocontas_datahub
 
+## Como executar
 
+O projeto roda via Docker (Debian slim + unixODBC + driver SQL Server, mais os drivers de Impala/PostgreSQL/MySQL/Oracle listados em `requirements.txt`).
 
-## Getting started
+### 1. Build da imagem
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.tce.pb.gov.br/GI/infocontas_datahub.git
-git branch -M main
-git push -uf origin main
+```bash
+docker build -t infocontas_datahub .
 ```
 
-## Integrate with your tools
+### 2. Configurar o `.env`
 
-* [Set up project integrations](https://gitlab.tce.pb.gov.br/GI/infocontas_datahub/-/settings/integrations)
+Copie `.env.example` para `.env` e preencha as variáveis abaixo conforme o que for usar.
 
-## Collaborate with your team
+#### MinIO do hub (obrigatórias sempre — usadas por `download` e `export`)
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+| Variável | Descrição |
+|---|---|
+| `MINIO_ACCESS_KEY` | Chave de acesso ao MinIO central do hub. No `export`, também é usada como identificador do TC produtor (`producer_tc`). |
+| `MINIO_SECRET_KEY` | Chave secreta correspondente. |
+| `MINIO_ENDPOINT` | Endereço do MinIO do hub, **sem** `http(s)://` (ex.: `minio.exemplo.gov.br:9000`). A conexão é sempre HTTPS. |
+| `MINIO_BUCKET` | Nome do bucket do hub (não pode conter `/`). |
 
-## Test and Deploy
+#### MinIO de destino (opcionais — só necessárias pra usar `--dest minio`/`both` no `download`)
 
-Use the built-in continuous integration in GitLab.
+| Variável | Descrição |
+|---|---|
+| `DEST_MINIO_ACCESS_KEY` | Chave de acesso do seu MinIO próprio. |
+| `DEST_MINIO_SECRET_KEY` | Chave secreta correspondente. |
+| `DEST_MINIO_ENDPOINT` | Endereço do seu MinIO, sem `http(s)://`. |
+| `DEST_MINIO_BUCKET` | Nome do bucket de destino (não pode conter `/`). |
+| `DEST_MINIO_PREFIX` | Opcional. Prefixo/pasta dentro do bucket (ex.: bucket `sigma` + prefix `infocontas` → objetos salvos em `sigma/infocontas/...`). |
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+O mirror só é ativado quando as 4 primeiras (`DEST_MINIO_ACCESS_KEY/SECRET_KEY/ENDPOINT/BUCKET`) estiverem preenchidas; sem elas, `--dest minio`/`both` falha com erro explícito em vez de silenciosamente não fazer nada.
 
-***
+#### Diretórios e desempenho (opcionais, todas têm valor default)
 
-# Editing this README
+| Variável | Default | Descrição |
+|---|---|---|
+| `CONTRACT_DIR` | `contratos` | Onde ficam os contratos (`schema.arrow`/`ingest_rules.json`) baixados do hub. |
+| `LOG_DIR` | `logs` | Onde ficam os `.log` de cada execução. |
+| `OUTPUT_DIR` | `out` | Onde o `export` grava o parquet, antes (e independente) de publicar. |
+| `DOWNLOAD_DIR` | `downloads` | Onde o `download` grava o parquet baixado do hub. |
+| `DOWNLOAD_MAX_WORKERS` | `6` | Threads paralelas ao baixar arquivos do hub. |
+| `EXTRACT_BATCH_ROWS` | `250000` | Tamanho do lote de linhas extraídas do banco por vez. |
+| `ENGINE_CHUNK_ROWS` | `250000` | Tamanho do lote de linhas normalizadas/validadas por vez. |
+| `MAX_INVALID_SAMPLES` | `100` | Quantas amostras de linha inválida salvar em `invalid_samples.json`; ao atingir esse limite, o processamento do `export` é interrompido (não continua só pra contar o total). |
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+#### Banco de dados (obrigatórias pra `export`; não usadas pelo `download`)
 
-## Suggestions for a good README
+| Variável | Descrição |
+|---|---|
+| `DB_DIALECT` | `mssql`, `postgresql`, `mysql`, `oracle`, `sqlite` ou `impala`. Define o driver/engine usado. |
+| `DB_HOST` | Host do banco. Não se aplica ao `sqlite`. |
+| `DB_NAME` | Nome do banco/schema (no `sqlite`, vira o caminho do arquivo se `DB_SQLITE_PATH` não for definido). |
+| `DB_USER` / `DB_PASSWORD` | Credenciais. Dispensáveis se `DB_TRUSTED_CONNECTION=true` (mssql). |
+| `DB_PORT` | Opcional; usa a porta padrão do dialect se não informado (`mssql=1433`, `postgresql=5432`, `mysql=3306`, `oracle=1521`, `impala=21050`). |
+| `DB_DRIVER` | Opcional; default por dialect (`pyodbc`, `psycopg`, `pymysql`, `oracledb`, `impyla`). |
+| `DB_TRUSTED_CONNECTION` | `true`/`false` (mssql). Se `true`, ignora `DB_USER`/`DB_PASSWORD` e usa autenticação Windows integrada. |
+| `DB_SCHEMA` | Opcional, schema padrão da conexão. |
+| `DB_QUERY` | Opcional. Parâmetros extras de conexão, no formato `chave=valor&chave2=valor2`. |
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+Variáveis específicas por `DB_DIALECT`:
 
-## Name
-Choose a self-explaining name for your project.
+| Dialect | Variável | Descrição |
+|---|---|---|
+| `mssql` | `DB_ODBC_DRIVER` | Nome do driver ODBC instalado (default: `ODBC Driver 18 for SQL Server`). |
+| `mssql` | `DB_ENCRYPT` | `yes`/`no` (default `yes`). |
+| `mssql` | `DB_TRUST_SERVER_CERTIFICATE` | `yes`/`no` (default `yes`). |
+| `mssql` | `DB_LOGIN_TIMEOUT` | Opcional, timeout de login em segundos. |
+| `postgresql` | `DB_SSLMODE` | Ex.: `require`, `disable`. |
+| `oracle` | `DB_SERVICE_NAME` | Nome do serviço Oracle (alternativa a SID). |
+| `sqlite` | `DB_SQLITE_PATH` | Caminho do arquivo `.sqlite` (senão usa `DB_NAME`). |
+| `impala` | `DB_AUTH_MECHANISM` | `NOSASL`, `PLAIN` (usuário/senha) ou `GSSAPI` (Kerberos). Default `NOSASL`. |
+| `impala` | `DB_USE_SSL` | `true`/`false`. |
+| `impala` | `DB_TIMEOUT` | Timeout de conexão em segundos. |
+| `impala` | `DB_KERBEROS_SERVICE_NAME` | Só relevante se `DB_AUTH_MECHANISM=GSSAPI`. Nome do serviço Kerberos (geralmente `impala`). |
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Monte o `.env` como arquivo (`-v "$(pwd)/.env:/app/.env:ro"`), **não use `--env-file`**: o projeto lê o `.env` internamente via `python-dotenv`, que trata aspas nos valores corretamente. O `--env-file` do Docker não remove aspas e quebra valores como `MINIO_ENDPOINT="..."`.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+### 3. Baixar dados do hub (`download` / `download-all-years`)
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```bash
+docker run --rm \
+  -v "$(pwd)/.env:/app/.env:ro" \
+  -v "$(pwd)/log:/app/log" \
+  -v "$(pwd)/contract:/app/contract" \
+  -v "$(pwd)/download:/app/download" \
+  infocontas_datahub download --dataset empenhos --version v1 --ano 2025 --tc tce_pb
+```
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+`--dest` controla onde os dados baixados ficam:
+- `--dest local` (padrão): salva só em disco, em `download/`.
+- `--dest minio`: envia os arquivos pro MinIO de destino (`DEST_MINIO_*` no `.env`) e apaga a cópia local depois.
+- `--dest both`: mantém a cópia local e também envia pro MinIO de destino.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Pra baixar todos os anos já publicados de um TC, use `download-all-years` (mesmos volumes, mesmo `--dest`):
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```bash
+docker run --rm \
+  -v "$(pwd)/.env:/app/.env:ro" \
+  -v "$(pwd)/log:/app/log" \
+  -v "$(pwd)/contract:/app/contract" \
+  -v "$(pwd)/download:/app/download" \
+  infocontas_datahub download-all-years --dataset empenhos --version v1 --tc tce_pb --dest minio
+```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### 4. Publicar dados no hub (`export`)
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Precisa das variáveis `DB_*` configuradas no `.env` (`mssql`, `postgresql`, `mysql`, `oracle` ou `impala`, conforme `DB_DIALECT`).
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```bash
+docker run --rm \
+  -v "$(pwd)/.env:/app/.env:ro" \
+  -v "$(pwd)/output:/app/output" \
+  -v "$(pwd)/log:/app/log" \
+  -v "$(pwd)/contract:/app/contract" \
+  infocontas_datahub export --dataset empenhos --version v1 --ano 2025
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Use `--no-publish` pra rodar a extração e a validação completas (mesmas regras do contrato) e gravar o parquet em `output/`, sem nunca publicar no hub — útil pra testar/ajustar a query sem risco de mandar dado de teste pro repositório compartilhado:
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```bash
+docker run --rm \
+  -v "$(pwd)/.env:/app/.env:ro" \
+  -v "$(pwd)/output:/app/output" \
+  -v "$(pwd)/log:/app/log" \
+  -v "$(pwd)/contract:/app/contract" \
+  infocontas_datahub export --dataset empenhos --version v1 --ano 2025 --no-publish
+```
 
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+**Importante**: mesmo sem `--no-publish`, o `export` só publica se **todas** as linhas passarem na validação do contrato — se existir uma única linha inválida, nada é publicado (nem as linhas válidas).
 
 
+## Executando localmente sem Docker
 
+Com as dependências de `requirements.txt` instaladas e o `.env` na raiz do projeto:
 
+```bash
 python -m app.main export --dataset empenhos --version v1 --ano 2026
 python -m app.main download --dataset empenhos --version v1 --ano 2026 --tc tce_pb
 python -m app.main download-all-years --dataset empenhos --version v1 --tc tce_pb
+```
 
+Os mesmos argumentos (`--dest`, `--no-publish`) valem aqui também.
+
+## Build do executável (Windows)
+
+Distribuição usada pelas UIEs: um `.exe` standalone gerado via PyInstaller, junto do `.env` e da pasta `consultas/`.
+
+```bash
 pyinstaller ^
   --clean ^
   --noconfirm ^
@@ -115,3 +167,4 @@ pyinstaller ^
   --hidden-import pyarrow.parquet ^
   --hidden-import pyarrow.compute ^
   app/main.py
+```
