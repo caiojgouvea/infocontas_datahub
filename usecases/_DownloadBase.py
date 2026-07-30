@@ -2,7 +2,7 @@ import logging
 import shutil
 from pathlib import Path
 from app.AppConfig import AppConfig
-from app.logger import log_last, log_section
+from app.logger import log_item, log_last, log_section
 from domain.Datasets import Datasets
 from domain.PartitionSpec import PartitionSpec
 from infra.storage.Storage import Storage
@@ -73,6 +73,8 @@ class DownloadBase:
 
     def _mirror_to_dest(self, *, remote_prefix: str, local_dir: Path) -> bool:
         log_section(logger, "MIRROR")
+        log_item(logger, f"Removendo dados anteriores no destino | prefix={remote_prefix}")
+        self.dest_storage.remove_prefix(remote_prefix=remote_prefix)
         log_last(logger, f"Copiando para MinIO de destino | remote_prefix={remote_prefix} | local={local_dir}")
         self.dest_storage.upload_dir(local_dir=local_dir, remote_prefix=remote_prefix)
         return True

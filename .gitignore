@@ -39,6 +39,10 @@ downloads/
 *.arrow
 *.jsonl
 
+# Scripts locais (não fazem parte do projeto compartilhado)
+download_all_tcs.sh
+export_all_years.sh
+
 # IDE e sistema
 .vscode
 .idea
